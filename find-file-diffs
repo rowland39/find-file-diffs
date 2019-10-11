@@ -1,0 +1,134 @@
+#!/bin/bash
+
+#####
+#
+# Functions
+#
+#####
+
+array_includes() {
+    local element array f
+    element="$1"
+    shift
+    array=("$*")
+
+    for f in ${array[*]}; do
+        if [ "$f" = "$element" ]; then
+            return 0
+        fi
+    done
+
+    return 1
+}
+
+#####
+#
+# Main Section
+#
+#####
+
+if [ -z "$2" ]; then
+    cat <<EOF >&2
+
+Usage: $0 <old directory> <new directory>
+
+This program finds files that differ between two directories. The old and new
+directory should contain similar files. The intention is to do something like
+compare a set of files that are stored in a tar archive where you have an
+older and newer version of the tar archive, etc.
+
+EOF
+    exit 1
+fi
+
+declare -a old_files new_files unmatched_files
+
+if ! readarray old_files <<< "$(find "$1" -mindepth 1 -type f -printf "%P\n")"; then
+    echo "Error generating file listing for the $1 directory." >&2
+    exit 1
+fi
+
+if ! readarray new_files <<< "$(find "$2" -mindepth 1 -type f -printf "%P\n")"; then
+    echo "Error generating file listing for the $2 directory." >&2
+    exit 1
+fi
+
+# Look for files in the old directory that are not in the new directory.
+unmatched_files=()
+
+for f in ${old_files[*]}; do
+    if ! array_includes "$f" "${new_files[*]}"; then
+        unmatched_files[${#unmatched_files[*]}]="$f"
+    fi 
+done
+
+if [ ${#unmatched_files[*]} -ne 0 ]; then
+    cat <<EOF
+
+Files in Old Directory but not in New Directory
+================================================================================
+
+EOF
+
+    for f in ${unmatched_files[*]}; do
+        echo "$f"
+    done
+
+    echo
+fi
+
+# Look for files in the new directory that are not in the old directory.
+unmatched_files=()
+
+for f in ${new_files[*]}; do
+    if ! array_includes "$f" "${old_files[*]}"; then
+        unmatched_files[${#unmatched_files[*]}]="$f"
+    fi 
+done
+
+if [ ${#unmatched_files[*]} -ne 0 ]; then
+    cat <<EOF
+
+Files in New Directory but not in Old Directory
+================================================================================
+
+EOF
+
+    for f in ${unmatched_files[*]}; do
+        echo "$f"
+    done
+
+    echo
+fi
+
+# Look for files that differ. We do this by looking at all files in the old
+# directry and doing a diff if the same file exists in the new directory.
+# This will show differences for all matching files.
+diff_found=0
+
+for f in ${old_files[*]}; do
+    if [ -f "$2/$f" ]; then
+        # The "diff" command exists with 0 if the files are the same, which is
+        # why we negate the result. We want to know if they are different. The
+        # exit value would make more sense if the command were named "same"
+        # instead of "diff".
+        if ! difference=$(diff -u "$1/$f" "$2/$f"); then
+            if [ $diff_found -eq 0 ]; then
+                cat <<EOF
+
+Files That Differ Between the Old Directory and New Directory
+================================================================================
+
+EOF
+                diff_found=1
+            fi
+
+            echo "$f"
+            echo
+            echo "--------------------------------------------------------------------------------"
+            echo "$difference"
+            echo "--------------------------------------------------------------------------------"
+            echo
+        fi
+    fi
+done
